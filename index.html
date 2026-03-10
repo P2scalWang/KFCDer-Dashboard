@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KFCDer Survey Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <style>
+        :root {
+            --primary-color: #E4002B;
+            --bg-color: #f4f7f6;
+            --card-bg: #ffffff;
+            --text-main: #2c3e50;
+        }
+
+        * { box-sizing: border-box; font-family: 'Kanit', sans-serif; margin: 0; padding: 0; }
+        body { background-color: var(--bg-color); color: var(--text-main); padding: 40px 20px; }
+        
+        .dashboard-container { max-width: 1200px; margin: 0 auto; }
+        .header { text-align: center; margin-bottom: 40px; }
+        .header h1 { color: var(--primary-color); font-size: 2.5rem; }
+        .header p { color: #7f8c8d; font-size: 1.1rem; margin-top: 5px; }
+        
+        .summary-cards { display: flex; gap: 20px; justify-content: center; margin-bottom: 40px; flex-wrap: wrap; }
+        .card {
+            background: var(--card-bg); padding: 30px; border-radius: 20px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.05); text-align: center; min-width: 250px;
+            border-top: 5px solid var(--primary-color);
+        }
+        .card h3 { color: #7f8c8d; font-size: 1.2rem; margin-bottom: 10px; }
+        .card .number { font-size: 3rem; font-weight: 600; color: var(--text-main); }
+        
+        .charts-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 30px; }
+        .chart-card {
+            background: var(--card-bg); padding: 25px; border-radius: 20px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.05);
+        }
+        .chart-card h3 { text-align: center; margin-bottom: 20px; font-size: 1.3rem; }
+        .canvas-container { position: relative; height: 300px; width: 100%; }
+        
+        #loader { text-align: center; font-size: 1.5rem; margin-top: 50px; color: var(--primary-color); font-weight: 500; }
+    </style>
+</head>
+<body>
+
+    <div class="dashboard-container">
+        <div class="header">
+            <h1>🍗 KFCDer Insight Dashboard</h1>
+            <p>ภาพรวมสรุปผลข้อมูลจากแบบสอบถาม</p>
+        </div>
+
+        <div id="loader">กำลังดึงข้อมูลจาก Google Sheets... ⏳</div>
+
+        <div id="dashboardContent" style="display: none;">
+            <div class="summary-cards">
+                <div class="card">
+                    <h3>จำนวนผู้ตอบแบบสอบถามทั้งหมด</h3>
+                    <div class="number" id="totalResponses">0</div>
+                </div>
+                <div class="card">
+                    <h3>เมนูยอดฮิตอันดับ 1</h3>
+                    <div class="number" id="topMenu" style="font-size: 2rem; color: #E4002B; margin-top: 15px;">-</div>
+                </div>
+            </div>
+
+            <div class="charts-grid">
+                <div class="chart-card">
+                    <h3>กลุ่มอายุผู้ตอบแบบสอบถาม</h3>
+                    <div class="canvas-container"><canvas id="ageChart"></canvas></div>
+                </div>
+                <div class="chart-card">
+                    <h3>เมนูที่ชอบที่สุด</h3>
+                    <div class="canvas-container"><canvas id="menuChart"></canvas></div>
+                </div>
+                <div class="chart-card">
+                    <h3>มักไปทาน KFC กับใครบ่อยที่สุด</h3>
+                    <div class="canvas-container"><canvas id="whoChart"></canvas></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ลิงก์ API ของคุณ
+        const scriptURL = 'https://script.google.com/macros/s/AKfycbyGPsAQ6-pVBkMIBZjpUUDSYKNchPQAxWVT9wX49hYOZ4v7U6VkUJCizCdpZJYe1Xelgw/exec';
+
+        // ฟังก์ชันช่วยนับจำนวน
+        function countFrequencies(dataArray) {
+            return dataArray.reduce((acc, curr) => {
+                if (curr && curr.trim() !== "") { acc[curr] = (acc[curr] || 0) + 1; }
+                return acc;
+            }, {});
+        }
+
+        // หาอันดับ 1
+        function getTopItem(countsObj) {
+            const keys = Object.keys(countsObj);
+            if (keys.length === 0) return "ยังไม่มีข้อมูล";
+            return keys.reduce((a, b) => countsObj[a] > countsObj[b] ? a : b);
+        }
+
+        const kfcColors = ['#E4002B', '#ff416c', '#ff7b93', '#ffb0c1', '#2c3e50'];
+
+        // เริ่มดึงข้อมูล
+        fetch(scriptURL)
+            .then(response => response.json())
+            .then(data => {
+                // ซ่อน Loader แสดง Dashboard
+                document.getElementById('loader').style.display = 'none';
+                document.getElementById('dashboardContent').style.display = 'block';
+
+                // ถ้ามีแค่หัวข้อ แต่ยังไม่มีคนตอบ
+                if(data.length <= 1) {
+                    document.getElementById('totalResponses').innerText = "0";
+                    document.getElementById('topMenu').innerText = "-";
+                    return; // หยุดการวาดกราฟ
+                }
+
+                // ตัดหัวข้อทิ้ง เอาเฉพาะข้อมูล
+                const rows = data.slice(1);
+                
+                document.getElementById('totalResponses').innerText = rows.length;
+
+                // ดึงข้อมูลแต่ละคอลัมน์ (นับ Index เริ่มจาก 0)
+                // คอลัมน์ที่ 2 ใน Sheet คือช่อง B (Index 1) = อายุ
+                const ageData = rows.map(row => row[1]);     
+                // คอลัมน์ที่ 5 ใน Sheet คือช่อง E (Index 4) = iq2 (เมนูที่ชอบ)
+                const menuData = rows.map(row => row[4]);    
+                // คอลัมน์ที่ 11 ใน Sheet คือช่อง K (Index 10) = cb_who (ไปทานกับใคร)
+                const whoData = rows.map(row => row[10]);    
+
+                const ageCounts = countFrequencies(ageData);
+                const menuCounts = countFrequencies(menuData);
+                const whoCounts = countFrequencies(whoData);
+
+                document.getElementById('topMenu').innerText = getTopItem(menuCounts) + ' 🍗';
+
+                // วาดกราฟ
+                new Chart(document.getElementById('ageChart'), {
+                    type: 'pie',
+                    data: { labels: Object.keys(ageCounts), datasets: [{ data: Object.values(ageCounts), backgroundColor: kfcColors }] },
+                    options: { maintainAspectRatio: false }
+                });
+
+                new Chart(document.getElementById('menuChart'), {
+                    type: 'bar',
+                    data: { labels: Object.keys(menuCounts), datasets: [{ label: 'จำนวน (คน)', data: Object.values(menuCounts), backgroundColor: '#E4002B', borderRadius: 8 }] },
+                    options: { maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } } }
+                });
+
+                new Chart(document.getElementById('whoChart'), {
+                    type: 'doughnut',
+                    data: { labels: Object.keys(whoCounts), datasets: [{ data: Object.values(whoCounts), backgroundColor: ['#E4002B', '#2c3e50', '#ff416c', '#f39c12'] }] },
+                    options: { maintainAspectRatio: false, cutout: '65%' }
+                });
+
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                document.getElementById('loader').innerText = "เกิดข้อผิดพลาดในการโหลดข้อมูล (ตรวจสอบว่าได้อัปเดต Deploy แล้วหรือยัง) ❌";
+            });
+    </script>
+</body>
+</html>
